@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: plaid-budget-sync
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --chdir src app:app
+    plan: free
+    envVars:
+      - key: PLAID_CLIENT_ID
+        sync: false        # set manually in Render dashboard
+      - key: PLAID_SECRET
+        sync: false        # set manually in Render dashboard
+      - key: PLAID_ENV
+        value: sandbox     # change to production when ready
+      - key: PLAID_ACCESS_TOKEN
+        sync: false        # set manually in Render dashboard
+      - key: ALLOWED_CALLER_EMAIL
+        value: krispix418@gmail.com
