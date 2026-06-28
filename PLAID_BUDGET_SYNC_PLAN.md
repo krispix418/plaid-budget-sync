@@ -1,166 +1,136 @@
-# Plaid Budget Sync — Implementation Plan & Claude Code Handoff
+# Plaid Budget Sync — Planning Layer (Updated Implementation Plan)
 
 **Developer:** krispix418@gmail.com
-**Workflow:** Planned in Claude.ai → implementing in Claude Code → debugging back in Claude.ai
-**Status:** Phase 1 complete (Plaid account + sandbox credentials). Starting Phase 2.
+**Last Updated:** June 2026
+**Status:** Pivoted — see below.
 
 ---
 
-## Project Goal
+## Project Pivot
 
-Automate manual transaction entry into an existing Google Sheets household budget tracker shared between Chris and Jeff. Plaid pulls transactions from linked accounts → a backend server exposes them → Google Apps Script writes them into an Inbox tab in the sheet → user reviews/assigns → transactions get filed into the correct section of the current month's tab.
+**Original goal:** Automate manual transaction entry into the Google Sheet household budget tracker via Plaid.
 
-**This replaces the tedious manual entry of every expense across multiple cards.**
+**New goal:** Use the Plaid project as a **planning layer** — auto-populating account balances and other financial data into the Google Sheet life hub. Budget *tracking* (transaction categorization, spend visibility, Chris/Jeff split) is being offloaded to **Origin Financial**, which handles that better out of the box with Partner Mode for couples.
+
+**The Google Sheet stays the central life hub** — it's not going away. It just no longer needs to be a transaction inbox. Instead, Plaid feeds it structured financial *state* (balances, net worth inputs) that would otherwise be entered manually.
 
 ---
 
-## Architecture
+## Architecture (Updated)
 
 ```
-Plaid API  →  Flask Server (Render)  →  Google Sheet (Apps Script + Inbox tab)
-(banks)       (/transactions endpoint)   (review, assign, file)
+Plaid API  →  Flask Server (Render)  →  Google Sheet (Apps Script)
+(banks)       (/balances endpoint)       (Pay-Off Matrix, net worth tab)
 ```
 
-Three components:
+Three components — same as before, but simpler scope:
 
-1. **Flask Backend (Python, hosted free on Render)** — handles all Plaid communication securely. API keys live here as environment variables, never in the browser or sheet. Exposes `GET /transactions` returning current-month transactions as JSON.
+1. **Flask Backend (Python, hosted on Render)** — calls Plaid `/accounts/balance/get`, returns current balances per linked account as JSON. Same security model as before (Google OIDC JWT auth).
 
-2. **Google Apps Script (lives in the sheet)** — calls the Flask server, writes transactions to the Inbox tab, handles auto-tab-creation and filing.
+2. **Google Apps Script** — calls `/balances`, writes balance values into specific cells in the Pay-Off Matrix tab (and eventually other planning sections).
 
-3. **Inbox Tab (staging area in the sheet)** — where new transactions land for review before being filed. The only thing the user/Jeff ever touches.
-
----
-
-## Key Decisions Made
-
-| Decision | Choice |
-|----------|--------|
-| Scope | **Current month only** — no historical backfill |
-| Month tab creation | **Option B: script auto-creates** the new month tab on the 1st by duplicating previous month's structure |
-| Recurring bills | **Pre-filled automatically** from previous month; user edits amounts freely, automation never overwrites |
-| Crossover transactions | Inbox **dropdown** for Chris/Jeff/Living — user overrides default before filing |
-| Transaction writes | Plaid transactions **only ever write to the Inbox tab** — manual edits elsewhere are always safe |
-| Duplicate prevention | Plaid `transaction_id` stored in hidden column |
+3. **Pay-Off Matrix tab** — the primary target. Instead of manually entering card balances every month, the script auto-fills them on demand or on a schedule.
 
 ---
 
-## The Sheet Structure (Context)
+## What's Retired
 
-Each monthly tab (e.g. "April Spending Tracker") has 4 side-by-side sections:
+The following original phases are **cancelled** — Origin Financial owns this now:
 
-- **Recurring Bills** (cols A–F): fixed monthly expenses, pre-filled by script
-- **Living Budget** (cols G–M): shared household spending — Date | Description | Tag | Amount | Payback flags | Card Used
-- **Chris Allowance** (cols N–U): Chris's personal spending, same structure
-- **Jeff Allowance** (cols V–AC): Jeff's personal spending, same structure
+- ~~Inbox tab (transaction staging area)~~
+- ~~Apps Script transaction filing logic~~
+- ~~Card → Chris/Jeff/Living section routing~~
+- ~~Duplicate prevention via transaction_id~~
+- ~~Monthly tab auto-creation~~
+- ~~Recurring bill pre-fill~~
 
-Plus a **Pay-Off Matrix** at the top (balances per card across BoA/SoFi accounts) — stays manual.
-
-**Note:** Formulas reference across tabs (e.g. `'DD Strategy'!J4`), so tab duplication must preserve formulas correctly — flagged for Phase 5 testing.
-
----
-
-## Accounts to Connect
-
-| Account | Default Section |
-|---------|----------------|
-| BoA | Chris Allowance |
-| BILT Mastercard (via Wells Fargo) | Chris Allowance |
-| AMEX Gold | Chris (floats to Living for shared) |
-| SoFi Checking | Chris Allowance |
-| Citi | Chris Allowance |
-| Apple Card | Jeff Allowance |
-| Chase Sapphire (CSP) | Jeff Allowance |
-| Venmo (Chris) | Chris — coverage may vary, test |
-| Venmo (Jeff) | Jeff — coverage may vary, test |
-
-**Card → Section mapping** handles ~85% automatically; crossover handled via Inbox dropdown.
-
-Instacart and Amazon Prime are merchants, not accounts — they appear on whatever card is linked.
+The transaction sync code (`sync_transactions.py`, `plaid_fetch.py`) is kept for reference but is no longer the core of this project.
 
 ---
 
-## Inbox Tab Layout
+## What's Kept & Reused
 
-| Date | Merchant | Tag | Amount | Card | Who | Status |
-|------|----------|-----|--------|------|-----|--------|
-| Apr 2 | Food Cellar | Groceries/Food | $38.14 | AMEX Gold | Living ▾ | Pending ▾ |
-| Apr 3 | Sweetleaf Coffee | Eating Out | $6.34 | BILT | Chris ▾ | Pending ▾ |
-
-- **Who** dropdown: Chris / Jeff / Living (pre-filled by card)
-- **Tag** dropdown: matches existing category tags (pre-filled from Plaid category)
-- **File It** button moves approved rows into the correct section of current month tab
-
----
-
-## Plaid Transaction Fields Used
-
-| Plaid field | Maps to |
-|-------------|---------|
-| `date` | Date column |
-| `merchant_name` | Description / merchant |
-| `amount` | Amount column |
-| `account_id` | Determines Card Used + Who |
-| `category` | Pre-fills Tag (user verifies) |
-| `transaction_id` | Duplicate prevention |
+| File | Status | Notes |
+|------|--------|-------|
+| `src/app.py` | ✅ Keep | Security model is solid — Google OIDC JWT auth, rate limiting, email allowlist. Swap `/transactions` for `/balances`. |
+| `src/plaid_client.py` | ✅ Keep | Works as-is. Just needs Production env + credentials. |
+| `src/sync_transactions.py` | 📦 Archive | Keep for reference, not actively used. |
+| `src/plaid_fetch.py` | 📦 Archive | Same. |
+| `render.yaml` | ✅ Keep | Deployment config unchanged. |
+| `.env.template` | 🔧 Update | Add `PLAID_ACCESS_TOKEN`, switch `PLAID_ENV` to `production`. |
 
 ---
 
-## Tech Stack
+## Accounts to Connect (Unchanged)
 
-- **Backend:** Python (Flask)
-- **Hosting:** Render.com (free tier)
-- **Plaid SDK:** `plaid-python` (official)
-- **Sheet layer:** Google Apps Script (JavaScript)
-- **Scheduling:** Apps Script daily trigger OR manual sync button
-- **Secrets:** Render environment variables + local `.env` (gitignored)
+| Account | Default Owner |
+|---------|--------------|
+| BoA | Chris |
+| BILT Mastercard (now via Cardless/Bilt 2.0) | Chris — ⚠️ Plaid connectivity flaky as of Feb 2026, test carefully |
+| AMEX Gold | Chris |
+| SoFi Checking | Chris |
+| Citi | Chris |
+| Apple Card | Jeff |
+| Chase Sapphire (CSP) | Jeff |
+| Venmo (Chris) | Chris — coverage may vary |
+| Venmo (Jeff) | Jeff — coverage may vary |
 
 ---
 
-## Phase Roadmap
+## Phase Roadmap (Updated)
 
 ### ✅ Phase 1 — Plaid Setup (COMPLETE)
 - Plaid developer account created
-- Sandbox credentials obtained (client_id + sandbox secret)
-- Environment: `sandbox` for building/testing
+- Sandbox credentials in 1Password
+- Flask server skeleton built with Google OIDC security model
 
-### ▶️ Phase 2 — Flask Server (NEXT — START HERE)
-Build the backend:
-- Project structure + virtualenv + `requirements.txt`
-- `.env` file for Plaid credentials (gitignored)
-- Plaid Link flow to connect accounts (generates access tokens)
-- `GET /transactions` endpoint returning current-month transactions as JSON
-- Test locally against Plaid Sandbox
-- Deploy to Render with environment variables
+### ▶️ Phase 2 — Switch to Production & Connect Real Accounts (NEXT)
+- Get Production credentials from Plaid dashboard (dashboard.plaid.com → Production section)
+- Update `.env.template` and 1Password entry: `PLAID_ENV=production`, use Production secret
+- Build or use Plaid Link to connect real bank accounts and generate access tokens
+- Store access tokens securely (Render env vars, one per institution or one multi-account item)
+- Verify connections in Plaid dashboard
 
-### Phase 3 — Google Apps Script
-- Auto-tab creation on the 1st (duplicate prior month, pre-fill recurring bills)
-- Inbox tab creation with dropdowns (Who / Tag)
-- Fetch transactions from Flask server → write to Inbox
-- Daily trigger + manual sync button
+### Phase 3 — `/balances` Endpoint
+- Replace `/transactions` with `/balances` in `app.py`
+- Call Plaid `/accounts/balance/get` for all linked access tokens
+- Return JSON: `{ "accounts": [{ "name": "AMEX Gold", "balance": 1234.56, "account_id": "..." }] }`
+- Add account → friendly name mapping (config or env var)
+- Test locally, deploy to Render
 
-### Phase 4 — Filing Logic
-- "File It" action: move Inbox rows → correct section of current month tab
-- Card → section default mapping
-- Duplicate prevention via transaction_id
+### Phase 4 — Apps Script: Pay-Off Matrix Auto-Fill
+- Write Apps Script that calls `/balances` (with Google OIDC token)
+- Map account names → specific cells in the Pay-Off Matrix tab
+- Add a "Refresh Balances" button to the Sheet
+- Optional: add a daily trigger for automatic refresh
 
-### Phase 5 — Testing & Polish
-- Connect real accounts (Plaid Development environment)
-- Category mapping table (Plaid categories → your tags)
-- Verify tab duplication preserves cross-tab formulas
-- Test Venmo + BILT connectivity
-- Jeff walkthrough
+### Phase 5 — Additional Planning Automations (Future)
+- **Net worth snapshot tab** — write monthly balance snapshots for historical tracking
+- **Savings runway calc** — pull checking/savings balances, compute months of runway
+- Other planning use cases TBD based on what's painful to update manually
 
 ---
 
-## Important Reminders
+## Open Questions (Follow-up Before Phase 4)
 
-- **Never commit secrets** — `.env`, credentials → `.gitignore`
-- **Sandbox first** — fully test with fake data before connecting real accounts
-- **Plaid environments:** Sandbox (fake/free) → Development (real, free ≤100 items) → Production (not needed)
-- **Render cold start:** free tier spins down after inactivity, first daily sync may take ~30s
+These need answers before building the Apps Script Pay-Off Matrix integration:
+
+1. **Pay-Off Matrix structure** — what does it look like exactly? Columns, rows, which cells map to which card? Screenshot or description needed to target the right cells.
+2. **Card list to auto-fill** — confirming the exact list of cards and whether BILT should be included given its current Plaid flakiness.
+3. **BILT status check** — test whether Plaid (via MX or Finicity fallback) can connect to Bilt 2.0 / Cardless before committing to including it.
+
+---
+
+## Key Reminders
+
+- **Never commit secrets** — `.env`, access tokens, credentials → `.gitignore`
+- **Plaid Production** = real account data, free up to 100 connected items
+- **BILT heads-up** — Wells Fargo partnership ended Feb 2026; Bilt is now on Cardless. Plaid connectivity has been reported as spotty across all budgeting apps. Test early.
+- **Render cold start** — free tier spins down after inactivity; first daily trigger may take ~30s
+- **Origin Financial** handles transaction tracking for Chris + Jeff. This project does NOT need to touch transactions anymore.
 
 ---
 
 ## Next Action
 
-Begin **Phase 2**: set up the Flask project structure and build the `/transactions` endpoint, tested against Plaid Sandbox. See the companion Claude Code kickoff prompt.
+Begin **Phase 2**: log into Plaid dashboard, grab Production credentials, update 1Password and `.env.template`, then connect the first real account to verify the Production setup works end-to-end.
