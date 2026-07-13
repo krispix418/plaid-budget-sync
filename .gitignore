@@ -4,6 +4,7 @@
 !.env.template
 __pycache__/
 *.pyc
+.venv/
 node_modules/
 dist/
 .vscode/
